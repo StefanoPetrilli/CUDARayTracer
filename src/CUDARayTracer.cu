@@ -9,31 +9,6 @@
 ////TODO Fare in modo che sia possibile costruire scene dinamicamente e gli oggetti delle scene
 //				che vengono costruite verranno salvati nella memoria statica
 
-void gpuErrorCheck(int i = 0){
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess)
-		    printf("Error %d: %s\n", i, cudaGetErrorString(err));
-}
-
-/**
- * Given a ray, create the blend of colors
- */
-__device__ float3 color(ray &r, hitable *world){
-	hitRecord rec;
-
-	//If the ray hitte something
-	if (world->hit(r, 0.0, MAXFLOAT, rec)) {
-		//Calculate the normal of the hitted objed
-		float3 normal = (r.pointAtParam(rec.t) - rec.c) / rec.r;
-		//Draw the normal
-		return 0.5 * make_float3(normal.x + 1.0, normal.y + 1.0, normal.z + 1.0);
-	} else { //Draw the background
-		float y = unitVector(r.direction()).y;
-		float t = 0.5 * (y + 1.0);
-		return (1.0 - t) * make_float3(1.0, 1.0, 1.0) + t * make_float3(0.5, 0.7, 1.0);
-	}
-}
-
 /**
  * The nvidia's GPUs have 64kb of memory that can be filled with constant variables.
  * Using this memory in the raytracer gives two advantages:
@@ -48,14 +23,50 @@ __constant__ float3 lowerLeftCorner;
 __constant__ float3 vertical;
 __constant__ float3 origin;
 __constant__ float3 horizontal;
+__constant__ sphere spheres[OBJNUMBER];
 
-__global__ void kernel(int* imageGpu){
+//Number of spheres
+const int sn = 2;
 
-	hitable *list[2];
+void gpuErrorCheck(int i = 0){
+	cudaError_t err = cudaGetLastError();
+	if (err != cudaSuccess)
+		    printf("Error %d: %s\n", i, cudaGetErrorString(err));
+}
 
-	list[0] = new sphere(make_float3(0, 0, -1), 0.5);
-	list[1] = new sphere(make_float3(10, -100.5, -1), 100);
-	hitable *world = new hitableList(list, 2);
+/**
+ * Given a ray, create the blend of colors
+ */
+__device__ float3 color(ray &r, int sphereNumber){
+
+	hitRecord rec, tempRec;
+	bool hitted = false;
+	double closest = MAXFLOAT;
+
+	for(int i = 0; i < sphereNumber; i++) {
+		//Check if the ray hit the object
+		//If there is already an hitted object it controls also if the new hitted object is closer than the previous
+		if (spheres[i].hit(r, 0.0, closest, tempRec)) {
+			hitted = true;
+			closest = tempRec.t;
+			rec = tempRec;
+		}
+	}
+
+	//If the ray hitte something
+	if (hitted) {
+		//Calculate the normal of the hitted objed
+		float3 normal = (r.pointAtParam(rec.t) - rec.c) / rec.r;
+		//Draw the normal
+		return 0.5 * make_float3(normal.x + 1.0, normal.y + 1.0, normal.z + 1.0);
+	} else { //Draw the background
+		float y = unitVector(r.direction()).y;
+		float t = 0.5 * (y + 1.0);
+		return (1.0 - t) * make_float3(1.0, 1.0, 1.0) + t * make_float3(0.5, 0.7, 1.0);
+	}
+}
+
+__global__ void kernel(int* imageGpu, int sphereNumber){
 
 	//the variable that increases is the h but the i keep the count of time of execution
 	//same with the w, but the j keep the counting
@@ -72,7 +83,7 @@ __global__ void kernel(int* imageGpu){
 			//generate a ray that start from the origin and pass trough the center of a given pixel
 			ray r(origin, lowerLeftCorner + (u * horizontal) + (v * vertical));
 			//calculate the color that that ray sees
-			float3 col = color(r, world);
+			float3 col = color(r, sphereNumber);
 
 			//printf("%d\n", int(255.99 * col.x));
 
@@ -138,7 +149,17 @@ int main ()
 	cudaMemcpyAsync(imageGpu, image, sizeof(int) * WIDTH * HEIGHT * BYTESPERPIXEL, cudaMemcpyHostToDevice, stream);
 	gpuErrorCheck();
 
-	kernel<<<BLKSIZE, THRDSIZE, 0, stream>>>(imageGpu);
+	sphere *spheresCPU[sn];
+
+	spheresCPU[0] = new sphere(make_float3(0, 0, -1), 0.5);
+	spheresCPU[1] = new sphere(make_float3(10, -100.5, -1), 100);
+
+	for (int  i = 0; i <  sn; i++) {
+		cudaMemcpyToSymbolAsync(spheres, spheresCPU[i], sizeof(sphere), sizeof(sphere) * i, cudaMemcpyHostToDevice);
+	}
+	gpuErrorCheck(100);
+
+	kernel<<<BLKSIZE, THRDSIZE, 0, stream>>>(imageGpu, 2);
 	gpuErrorCheck();
 
 	//deallocate the constant data that now reside in the constant memory from the cpu

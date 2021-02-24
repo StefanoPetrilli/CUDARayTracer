@@ -3,5 +3,6 @@
 #define BYTESPERPIXEL 3
 #define BLKSIZE 256
 #define THRDSIZE 100
+#define OBJNUMBER 10
 
 #define addressConverter(H, W, P) (((W) * (BYTESPERPIXEL)) + ((H) * (WIDTH) * (BYTESPERPIXEL)) + (P))
