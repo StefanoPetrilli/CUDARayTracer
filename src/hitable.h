@@ -1,7 +1,9 @@
+//When there is an hit we store the parameters of the hitted object to do the calculation
+//only on the closest hitted object
 struct hitRecord {
 	float t;
-	float3 p;
-	float3 normal;
+	float3 c;
+	float r;
 };
 
 class hitable {
@@ -25,20 +27,27 @@ class sphere: public hitable {
 			float a = dot(r.direction(), r.direction());
 			float b = dot(oc, r.direction());
 			float c = dot(oc, oc) - radius*radius;
+
+			//The sphere may be hitted never, once or two time
+			//If this is more than 0 it means that eventually the ray hit the sphere
 			if ((b * b - a*c) > 0){
 				//TODO riscrivi questa parte per renderla più estetica
+				//Calculate the first hitting point
 				float temp = (-b - sqrt(b * b -  a * c)) / a;
+				//If the hitting point is in front of the camera we register that hit
 				if (temp < tMax && temp > tMin) {
+					//If it is hitted save the position and the parameters of the sphere that is hitted
 					rec.t = temp;
-					rec.p = r.pointAtParam(rec.t);
-					rec.normal = (rec.p - center) / radius;
+					rec.c = center;
+					rec.r = radius;
 					return true;
 				}
+				//Do the same with the second hitting point
 				temp = (-b - sqrt(b * b -  a * c)) / a;
 				if (temp < tMax && temp > tMin) {
 					rec.t = temp;
-					rec.p = r.pointAtParam(rec.t);
-					rec.normal = (rec.p - center) / radius;
+					rec.c = center;
+					rec.r = radius;
 					return true;
 				}
 			}
@@ -59,7 +68,10 @@ public:
 			hitRecord tempRec;
 			bool hitted = false;
 			double closest = t_max;
+			//Foreach hitable object
 			for(int i = 0; i < listSize; i++) {
+				//Check if the ray hit the object
+				//If there is already an hitted object it controls also if the new hitted object is closer than the previous
 				if (list[i]->hit(r, t_min, closest, tempRec)) {
 					hitted = true;
 					closest = tempRec.t;

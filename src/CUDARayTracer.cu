@@ -5,11 +5,6 @@
 #include "ray.h"
 #include "hitable.h"
 
-//TODO trovare il motivo del comportamento inaspettato
-//TODO calcolare la normale solo del punto più vicino
-//TODO scrivere i commenti sulla sfera
-
-
 //--Optional
 ////TODO Fare in modo che sia possibile costruire scene dinamicamente e gli oggetti delle scene
 //				che vengono costruite verranno salvati nella memoria statica
@@ -26,9 +21,13 @@ void gpuErrorCheck(int i = 0){
 __device__ float3 color(ray &r, hitable *world){
 	hitRecord rec;
 
+	//If the ray hitte something
 	if (world->hit(r, 0.0, MAXFLOAT, rec)) {
-		return 0.5 * make_float3(rec.normal.x + 1.0, rec.normal.y + 1.0, rec.normal.z + 1.0);
-	} else {
+		//Calculate the normal of the hitted objed
+		float3 normal = (r.pointAtParam(rec.t) - rec.c) / rec.r;
+		//Draw the normal
+		return 0.5 * make_float3(normal.x + 1.0, normal.y + 1.0, normal.z + 1.0);
+	} else { //Draw the background
 		float y = unitVector(r.direction()).y;
 		float t = 0.5 * (y + 1.0);
 		return (1.0 - t) * make_float3(1.0, 1.0, 1.0) + t * make_float3(0.5, 0.7, 1.0);
@@ -44,6 +43,7 @@ __device__ float3 color(ray &r, hitable *world){
  * 	3- Once again, since they are allocated once for all the cores a noticable amount of memory
  * 		remain free
  */
+//These are used to represent the camera
 __constant__ float3 lowerLeftCorner;
 __constant__ float3 vertical;
 __constant__ float3 origin;
@@ -64,21 +64,24 @@ __global__ void kernel(int* imageGpu){
 		for (int j = 0, w = threadIdx.x; j < WIDTH; j++) {
 			if (w >=  WIDTH) continue;
 
-			//Those are relative coordinates based on the virtual camera
+			//u and v are used to translate a pixel coordinate on the scene
 			float u =  float(w) / float(WIDTH);
 			float v = float(h)  / float(HEIGHT);
 
 
-			//Calculate the color of the ray based on the relative coordinates
+			//generate a ray that start from the origin and pass trough the center of a given pixel
 			ray r(origin, lowerLeftCorner + (u * horizontal) + (v * vertical));
+			//calculate the color that that ray sees
 			float3 col = color(r, world);
 
 			//printf("%d\n", int(255.99 * col.x));
 
+			//Put the color seen by the ray in the memory address that correspond to the pixel
 			imageGpu[addressConverter(h, w, 0)] = int(255.99 * col.x);
 			imageGpu[addressConverter(h, w, 1)] = int(255.99 * col.y);
 			imageGpu[addressConverter(h, w, 2)] = int(255.99 * col.z);
 
+			//Check if the value inside the memory is in the valid range
 			if(imageGpu[addressConverter(h, w, 0)] > 256 || imageGpu[addressConverter(h, w, 0)] < 0) printf("Errore");
 			if(imageGpu[addressConverter(h, w, 1)] > 256 || imageGpu[addressConverter(h, w, 1)] < 0) printf("Errore");
 			if(imageGpu[addressConverter(h, w, 2)] > 256 || imageGpu[addressConverter(h, w, 2)] < 0) printf("Errore");
@@ -95,25 +98,36 @@ int main ()
 {
 
 	//Allocate a tridimensional vector that contains the image's data
-	int *image = (int*) malloc(sizeof(int) * WIDTH * HEIGHT * BYTESPERPIXEL);
-	memset((int*) image, 1, sizeof(int) * WIDTH * HEIGHT * BYTESPERPIXEL);
+	int *image;
 
-	//Initialize the data that will reside in the constant gpu memory in the
-	//TODO capire che vogliono dire queste variabili
-	float3 lowerLeftCornerCPU = make_float3(-2.0, -1.0, -1.0);
-	float3 horizontalCPU = make_float3(4.0, 0.0, 0.0);
-	float3 verticalCPU = make_float3(0.0, 2.0, 0.0);
-	float3 originCPU = make_float3(0.0, 0.0, 0.0);
-
-	//Send the data to the constant memory
-	cudaMemcpyToSymbol(lowerLeftCorner, &lowerLeftCornerCPU, sizeof(float3), 0, cudaMemcpyHostToDevice);
-	cudaMemcpyToSymbol(horizontal, &horizontalCPU, sizeof(float3));
-	cudaMemcpyToSymbol(vertical, &verticalCPU, sizeof(float3));
-	cudaMemcpyToSymbol(origin, &originCPU, sizeof(float3));
+	//cudaHostAlloc is used to allocate paged memory on the host device, in this way the position of the memory will
+	//never change. It is necessary if we want to use asynchronous loading of the data in the gpu
+	cudaHostAlloc((void**)&image, WIDTH * HEIGHT * BYTESPERPIXEL * sizeof( int ), cudaHostAllocDefault);
 	gpuErrorCheck();
 
-	//deallocate the constant data that now reside in the constant memory from the cpu
-	//TODO deallocate i float3 che ora sono in memoria costante
+	memset((int*) image, 1, sizeof(int) * WIDTH * HEIGHT * BYTESPERPIXEL);
+
+	cudaStream_t stream;
+	cudaStreamCreate(&stream);
+
+
+	//Initialize the data that will reside in the constant gpu memory in the
+	float3 lowerLeftCornerCPU, horizontalCPU, verticalCPU, originCPU;
+	cudaHostAlloc((void**) &lowerLeftCornerCPU, sizeof(float3), cudaHostAllocDefault);
+	cudaHostAlloc((void**) &horizontalCPU, sizeof(float3), cudaHostAllocDefault);
+	cudaHostAlloc((void**) &verticalCPU, sizeof(float3), cudaHostAllocDefault);
+	cudaHostAlloc((void**) &originCPU, sizeof(float3), cudaHostAllocDefault);
+	lowerLeftCornerCPU = make_float3(-2.0, -1.0, -1.0);
+	horizontalCPU = make_float3(4.0, 0.0, 0.0);
+	verticalCPU = make_float3(0.0, 2.0, 0.0);
+	originCPU = make_float3(0.0, 0.0, 0.0);
+
+	//Send the data to the constant memory
+	cudaMemcpyToSymbolAsync(lowerLeftCorner, &lowerLeftCornerCPU, sizeof(float3), 0, cudaMemcpyHostToDevice);
+	cudaMemcpyToSymbolAsync(horizontal, &horizontalCPU, sizeof(float3), 0, cudaMemcpyHostToDevice);
+	cudaMemcpyToSymbolAsync(vertical, &verticalCPU, sizeof(float3), 0, cudaMemcpyHostToDevice);
+	cudaMemcpyToSymbolAsync(origin, &originCPU, sizeof(float3), 0, cudaMemcpyHostToDevice);
+	gpuErrorCheck();
 
 	//Allocate the memory on the gpu
 	int *imageGpu;
@@ -121,17 +135,25 @@ int main ()
 	gpuErrorCheck();
 
 	//Transfer the image to the gpu for the elaboration
-	cudaMemcpy(imageGpu, image, sizeof(int) * WIDTH * HEIGHT * BYTESPERPIXEL, cudaMemcpyHostToDevice);
+	cudaMemcpyAsync(imageGpu, image, sizeof(int) * WIDTH * HEIGHT * BYTESPERPIXEL, cudaMemcpyHostToDevice, stream);
 	gpuErrorCheck();
 
-	kernel<<<BLKSIZE, THRDSIZE>>>(imageGpu);
+	kernel<<<BLKSIZE, THRDSIZE, 0, stream>>>(imageGpu);
 	gpuErrorCheck();
+
+	//deallocate the constant data that now reside in the constant memory from the cpu
+	//TODO deallocate i float3 che ora sono in memoria costante
 
 	//Take back the image
-	cudaMemcpy(image, imageGpu,  sizeof(int) * WIDTH * HEIGHT * BYTESPERPIXEL, cudaMemcpyDeviceToHost);
+	cudaMemcpyAsync(image, imageGpu,  sizeof(int) * WIDTH * HEIGHT * BYTESPERPIXEL, cudaMemcpyDeviceToHost, stream);
 	gpuErrorCheck();
 
+	//We have to be sure that all the data are back to the cpu
+	cudaStreamSynchronize(stream);
 	generate(WIDTH, HEIGHT, BYTESPERPIXEL, image);
+
+	cudaFreeHost(image);
+	gpuErrorCheck();
 
 	printf("fine\n");
     return EXIT_SUCCESS;

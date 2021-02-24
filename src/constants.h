@@ -1,5 +1,5 @@
-#define WIDTH 4096
-#define HEIGHT 2048
+#define WIDTH 1024
+#define HEIGHT 512
 #define BYTESPERPIXEL 3
 #define BLKSIZE 256
 #define THRDSIZE 100

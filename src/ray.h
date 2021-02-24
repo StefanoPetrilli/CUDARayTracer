@@ -12,6 +12,7 @@ public:
 
 	__device__ float3 origin() const {return A;}
 	__device__ float3 direction() const {return B;}
+	//This equation gives the position of the ray when t varies
 	__device__ float3 pointAtParam(float t) const {return A + (t *B);}
 
 };
