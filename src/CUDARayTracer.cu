@@ -5,6 +5,9 @@
 #include "ray.h"
 #include "hitable.h"
 
+//TODO scrivere qualche commento
+//TODO capire come fare un sistema di antialiasing con i controcazzi
+
 //--Optional
 ////TODO Fare in modo che sia possibile costruire scene dinamicamente e gli oggetti delle scene
 //				che vengono costruite verranno salvati nella memoria statica
@@ -37,7 +40,7 @@ void gpuErrorCheck(int i = 0){
 /**
  * Given a ray, create the blend of colors
  */
-__device__ float3 color(ray &r, int sphereNumber){
+__device__ float3 color(ray &r, int sphereNumber, int* hittedMaterial){
 
 	hitRecord rec, tempRec;
 	bool hitted = false;
@@ -53,11 +56,12 @@ __device__ float3 color(ray &r, int sphereNumber){
 		}
 	}
 
-	//If the ray hitte something
+	//If the ray hitted something
 	if (hitted) {
 		//Calculate the normal of the hitted objed
 		float3 normal = (r.pointAtParam(rec.t) - rec.c) / rec.r;
 		//Draw the normal
+		*hittedMaterial = rec.objId;
 		return 0.5 * make_float3(normal.x + 1.0, normal.y + 1.0, normal.z + 1.0);
 	} else { //Draw the background
 		float y = unitVector(r.direction()).y;
@@ -67,41 +71,60 @@ __device__ float3 color(ray &r, int sphereNumber){
 }
 
 __global__ void kernel(int* imageGpu, int sphereNumber){
+	__shared__ int hittedMaterial[THRDSIZE];
+	__shared__ bool anti;
 
-	//the variable that increases is the h but the i keep the count of time of execution
-	//same with the w, but the j keep the counting
-	for (int i = 0, h = blockIdx.x; i < HEIGHT; i++) {
-		if (h >= HEIGHT) continue;
-		for (int j = 0, w = threadIdx.x; j < WIDTH; j++) {
-			if (w >=  WIDTH) continue;
+	if (threadIdx.x == 0) anti = false;
 
-			//u and v are used to translate a pixel coordinate on the scene
-			float u =  float(w) / float(WIDTH);
-			float v = float(h)  / float(HEIGHT);
+	hittedMaterial[threadIdx.x] = 0;
 
+	int offset = blockIdx.x * blockDim.x;
+	int w = offset % WIDTH + threadIdx.x;
+	int h = int(offset / WIDTH);
 
-			//generate a ray that start from the origin and pass trough the center of a given pixel
-			ray r(origin, lowerLeftCorner + (u * horizontal) + (v * vertical));
-			//calculate the color that that ray sees
-			float3 col = color(r, sphereNumber);
+	//u and v are used to translate a pixel coordinate on the scene
+	float u =  float(w) / float(WIDTH);
+	float v = float(h)  / float(HEIGHT);
 
-			//printf("%d\n", int(255.99 * col.x));
+	//generate a ray that start from the origin and pass trough the center of a given pixel
+	ray r(origin, lowerLeftCorner + (u * horizontal) + (v * vertical));
+	//calculate the color that that ray sees
+	float3 col = color(r, sphereNumber, &hittedMaterial[threadIdx.x]);
 
-			//Put the color seen by the ray in the memory address that correspond to the pixel
-			imageGpu[addressConverter(h, w, 0)] = int(255.99 * col.x);
-			imageGpu[addressConverter(h, w, 1)] = int(255.99 * col.y);
-			imageGpu[addressConverter(h, w, 2)] = int(255.99 * col.z);
-
-			//Check if the value inside the memory is in the valid range
-			if(imageGpu[addressConverter(h, w, 0)] > 256 || imageGpu[addressConverter(h, w, 0)] < 0) printf("Errore");
-			if(imageGpu[addressConverter(h, w, 1)] > 256 || imageGpu[addressConverter(h, w, 1)] < 0) printf("Errore");
-			if(imageGpu[addressConverter(h, w, 2)] > 256 || imageGpu[addressConverter(h, w, 2)] < 0) printf("Errore");
-
-			w = threadIdx.x + (blockDim.x * j);
+	__syncthreads();
+	if (threadIdx.x == 0) {
+		int firstHit = hittedMaterial[0];
+		for (int i = 1; i < THRDSIZE; i++) {
+			//printf("block %d , thread %d hits %d\n", blockIdx.x, threadIdx.x, hittedMaterial[0]);
+			if(firstHit != hittedMaterial[i]) {
+				anti = true;
+				/*
+				for (int j = 1; j < THRDSIZE; j++) {
+					printf("%d, ",  hittedMaterial[j]);
+				}
+				printf("\n");*/
+			}
 		}
-		h = blockIdx.x + (gridDim.x * i);
-
 	}
+	__syncthreads();
+
+
+	if (anti) { //Exec the antialiasing
+		imageGpu[addressConverter(h, w, 0)] = 255;
+		imageGpu[addressConverter(h, w, 1)] = 0;
+		imageGpu[addressConverter(h, w, 2)] = 0;
+	} else { //Put the color seen by the ray in the memory address that correspond to the pixel
+		imageGpu[addressConverter(h, w, 0)] = int(255.99 * col.x);
+		imageGpu[addressConverter(h, w, 1)] = int(255.99 * col.y);
+		imageGpu[addressConverter(h, w, 2)] = int(255.99 * col.z);
+	}
+
+	//Check if the value inside the memory is in the valid range
+	/*
+	if(imageGpu[addressConverter(h, w, 0)] > 256 || imageGpu[addressConverter(h, w, 0)] < 0) printf("Errore");
+	if(imageGpu[addressConverter(h, w, 1)] > 256 || imageGpu[addressConverter(h, w, 1)] < 0) printf("Errore");
+	if(imageGpu[addressConverter(h, w, 2)] > 256 || imageGpu[addressConverter(h, w, 2)] < 0) printf("Errore");
+	 */
 
 }
 
@@ -151,13 +174,13 @@ int main ()
 
 	sphere *spheresCPU[sn];
 
-	spheresCPU[0] = new sphere(make_float3(0, 0, -1), 0.5);
-	spheresCPU[1] = new sphere(make_float3(10, -100.5, -1), 100);
+	spheresCPU[0] = new sphere(make_float3(0, 0, -1), 0.5, 1);
+	spheresCPU[1] = new sphere(make_float3(10, -100.5, -1), 100, 2);
 
 	for (int  i = 0; i <  sn; i++) {
 		cudaMemcpyToSymbolAsync(spheres, spheresCPU[i], sizeof(sphere), sizeof(sphere) * i, cudaMemcpyHostToDevice);
 	}
-	gpuErrorCheck(100);
+	gpuErrorCheck();
 
 	kernel<<<BLKSIZE, THRDSIZE, 0, stream>>>(imageGpu, 2);
 	gpuErrorCheck();

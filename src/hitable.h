@@ -4,18 +4,21 @@ struct hitRecord {
 	float t;
 	float3 c;
 	float r;
+	int objId;
 };
 
 class sphere {
 	public:
 		float3 center;
 		float radius;
+		int id;
 
 		__device__ void print() {printf("ao");}
 		__device__ __host__ sphere() {}
-		__device__ __host__ sphere(float3 cen,  float rad) {
+		__device__ __host__ sphere(float3 cen,  float rad, int i) {
 			center = cen;
 			radius = rad;
+			id = i;
 		};
 
 		__device__ bool hit(const ray &r, float tMin, float tMax, hitRecord &rec) const {
@@ -36,6 +39,7 @@ class sphere {
 					rec.t = temp;
 					rec.c = center;
 					rec.r = radius;
+					rec.objId = id;
 					return true;
 				}
 				//Do the same with the second hitting point
@@ -44,6 +48,7 @@ class sphere {
 					rec.t = temp;
 					rec.c = center;
 					rec.r = radius;
+					rec.objId = id;
 					return true;
 				}
 			}
