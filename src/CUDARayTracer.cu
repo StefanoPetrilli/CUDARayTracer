@@ -5,10 +5,11 @@
 #include "ray.h"
 #include "hitable.h"
 
-//TODO scrivere qualche commento
-//TODO capire come fare un sistema di antialiasing con i controcazzi
+
+//TODO write some comments
 
 //--Optional
+//TODO make the antialiasing sampling random.
 ////TODO Fare in modo che sia possibile costruire scene dinamicamente e gli oggetti delle scene
 //				che vengono costruite verranno salvati nella memoria statica
 
@@ -84,7 +85,7 @@ __global__ void kernel(int* imageGpu, int sphereNumber){
 
 	//u and v are used to translate a pixel coordinate on the scene
 	float u =  float(w) / float(WIDTH);
-	float v = float(h)  / float(HEIGHT);
+	float v = float(h) / float(HEIGHT);
 
 	//generate a ray that start from the origin and pass trough the center of a given pixel
 	ray r(origin, lowerLeftCorner + (u * horizontal) + (v * vertical));
@@ -98,33 +99,30 @@ __global__ void kernel(int* imageGpu, int sphereNumber){
 			//printf("block %d , thread %d hits %d\n", blockIdx.x, threadIdx.x, hittedMaterial[0]);
 			if(firstHit != hittedMaterial[i]) {
 				anti = true;
-				/*
-				for (int j = 1; j < THRDSIZE; j++) {
-					printf("%d, ",  hittedMaterial[j]);
-				}
-				printf("\n");*/
 			}
 		}
 	}
 	__syncthreads();
 
 
-	if (anti) { //Exec the antialiasing
-		imageGpu[addressConverter(h, w, 0)] = 255;
-		imageGpu[addressConverter(h, w, 1)] = 0;
-		imageGpu[addressConverter(h, w, 2)] = 0;
-	} else { //Put the color seen by the ray in the memory address that correspond to the pixel
-		imageGpu[addressConverter(h, w, 0)] = int(255.99 * col.x);
-		imageGpu[addressConverter(h, w, 1)] = int(255.99 * col.y);
-		imageGpu[addressConverter(h, w, 2)] = int(255.99 * col.z);
+	if (anti) { //Exec the antialiasing if necessary
+		//Generate 9 ray equally spaced for each pixel
+		for (int i = 0; i < 3; i ++) {
+			for (int j = 0; j < 3; j ++){
+				u =  (float(w) + 0.3 * i) / float(WIDTH);
+				v = (float(h) + 0.3 * j) / float(HEIGHT);
+				r = ray(origin, lowerLeftCorner + (u * horizontal) + (v * vertical));
+				col = col + color(r, sphereNumber, &hittedMaterial[threadIdx.x]);
+				col = col / 2;
+			}
+		}
+		//in the end the value of color is the average color of the 9 rays
 	}
 
-	//Check if the value inside the memory is in the valid range
-	/*
-	if(imageGpu[addressConverter(h, w, 0)] > 256 || imageGpu[addressConverter(h, w, 0)] < 0) printf("Errore");
-	if(imageGpu[addressConverter(h, w, 1)] > 256 || imageGpu[addressConverter(h, w, 1)] < 0) printf("Errore");
-	if(imageGpu[addressConverter(h, w, 2)] > 256 || imageGpu[addressConverter(h, w, 2)] < 0) printf("Errore");
-	 */
+	//Put the color seen by the ray in the memory address that correspond to the pixel
+	imageGpu[addressConverter(h, w, 0)] = int(255.99 * col.x);
+	imageGpu[addressConverter(h, w, 1)] = int(255.99 * col.y);
+	imageGpu[addressConverter(h, w, 2)] = int(255.99 * col.z);
 
 }
 
@@ -144,7 +142,6 @@ int main ()
 	cudaStream_t stream;
 	cudaStreamCreate(&stream);
 
-
 	//Initialize the data that will reside in the constant gpu memory in the
 	float3 lowerLeftCornerCPU, horizontalCPU, verticalCPU, originCPU;
 	cudaHostAlloc((void**) &lowerLeftCornerCPU, sizeof(float3), cudaHostAllocDefault);
@@ -163,7 +160,7 @@ int main ()
 	cudaMemcpyToSymbolAsync(origin, &originCPU, sizeof(float3), 0, cudaMemcpyHostToDevice);
 	gpuErrorCheck();
 
-	//Allocate the memory on the gpu
+	//Allocate the image memory on the gpu
 	int *imageGpu;
 	cudaMalloc((void**) &imageGpu, sizeof(int) * WIDTH * HEIGHT * BYTESPERPIXEL);
 	gpuErrorCheck();
