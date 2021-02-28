@@ -4,8 +4,12 @@
 #include "float3.h"
 #include "ray.h"
 #include "hitable.h"
+#include <curand.h>
+#include <curand_kernel.h>
 
 
+//TODO generate numberm more randomly
+//TODO eliminate the recursion
 //TODO write some comments
 
 //--Optional
@@ -32,16 +36,41 @@ __constant__ sphere spheres[OBJNUMBER];
 //Number of spheres
 const int sn = 2;
 
+__device__ curandState_t state;
+
 void gpuErrorCheck(int i = 0){
 	cudaError_t err = cudaGetLastError();
 	if (err != cudaSuccess)
 		    printf("Error %d: %s\n", i, cudaGetErrorString(err));
 }
 
+//TODO pass the actual time to make it random
+__device__ int pw = 0;
+__device__ void rndInit(){
+
+	pw = pw + threadIdx.x  + blockIdx.x * blockDim.x;
+	//Init the parameters used to generate the random number
+	curand_init(pw, 0, 0, &state);
+}
+
+__device__ float getRndFloat(){
+	return  curand_uniform (&state);
+}
+
+__device__ float3 randomSpherePoint(){
+	rndInit();
+	//Init the parameters used to generate the random number
+	float3 p = make_float3(curand_uniform (&state), curand_uniform (&state), curand_uniform (&state)) - make_float3(1, 1, 1) ;
+	while (float3SquaredLength(p) >= 1.0) {
+		p = make_float3(curand_uniform (&state), curand_uniform (&state), curand_uniform (&state)) - make_float3(1, 1, 1) ;
+	}
+	return p;
+}
+
 /**
  * Given a ray, create the blend of colors
  */
-__device__ float3 color(ray &r, int sphereNumber, int* hittedMaterial){
+__device__ float3 color(ray &r, int sphereNumber, int* hittedMaterial, int d){
 
 	hitRecord rec, tempRec;
 	bool hitted = false;
@@ -50,7 +79,7 @@ __device__ float3 color(ray &r, int sphereNumber, int* hittedMaterial){
 	for(int i = 0; i < sphereNumber; i++) {
 		//Check if the ray hit the object
 		//If there is already an hitted object it controls also if the new hitted object is closer than the previous
-		if (spheres[i].hit(r, 0.0, closest, tempRec)) {
+		if (spheres[i].hit(r, 0.01, closest, tempRec)) {
 			hitted = true;
 			closest = tempRec.t;
 			rec = tempRec;
@@ -58,18 +87,24 @@ __device__ float3 color(ray &r, int sphereNumber, int* hittedMaterial){
 	}
 
 	//If the ray hitted something
-	if (hitted) {
+	if (hitted && d < 2) {
 		//Calculate the normal of the hitted objed
 		float3 normal = (r.pointAtParam(rec.t) - rec.c) / rec.r;
 		//Draw the normal
 		*hittedMaterial = rec.objId;
-		return 0.5 * make_float3(normal.x + 1.0, normal.y + 1.0, normal.z + 1.0);
+
+		float3 target = r.pointAtParam(rec.t) + (0.5 * make_float3(normal.x + 1.0, normal.y + 1.0, normal.z + 1.0)) + randomSpherePoint();
+
+		ray z = ray(r.pointAtParam(rec.t), target - r.pointAtParam(rec.t));
+		return 0.5 * color(z , sphereNumber, &hittedMaterial[threadIdx.x], d + 1);//make_float3(normal.x + 1.0, normal.y + 1.0, normal.z + 1.0); //* color(z , sphereNumber, &hittedMaterial[threadIdx.x]);
 	} else { //Draw the background
 		float y = unitVector(r.direction()).y;
 		float t = 0.5 * (y + 1.0);
 		return (1.0 - t) * make_float3(1.0, 1.0, 1.0) + t * make_float3(0.5, 0.7, 1.0);
 	}
 }
+
+
 
 __global__ void kernel(int* imageGpu, int sphereNumber){
 	__shared__ int hittedMaterial[THRDSIZE];
@@ -83,6 +118,8 @@ __global__ void kernel(int* imageGpu, int sphereNumber){
 	int w = offset % WIDTH + threadIdx.x;
 	int h = int(offset / WIDTH);
 
+	rndInit();
+
 	//u and v are used to translate a pixel coordinate on the scene
 	float u =  float(w) / float(WIDTH);
 	float v = float(h) / float(HEIGHT);
@@ -90,13 +127,12 @@ __global__ void kernel(int* imageGpu, int sphereNumber){
 	//generate a ray that start from the origin and pass trough the center of a given pixel
 	ray r(origin, lowerLeftCorner + (u * horizontal) + (v * vertical));
 	//calculate the color that that ray sees
-	float3 col = color(r, sphereNumber, &hittedMaterial[threadIdx.x]);
+	float3 col = color(r, sphereNumber, &hittedMaterial[threadIdx.x], 0);
 
 	__syncthreads();
 	if (threadIdx.x == 0) {
 		int firstHit = hittedMaterial[0];
 		for (int i = 1; i < THRDSIZE; i++) {
-			//printf("block %d , thread %d hits %d\n", blockIdx.x, threadIdx.x, hittedMaterial[0]);
 			if(firstHit != hittedMaterial[i]) {
 				anti = true;
 			}
@@ -112,7 +148,7 @@ __global__ void kernel(int* imageGpu, int sphereNumber){
 				u =  (float(w) + 0.3 * i) / float(WIDTH);
 				v = (float(h) + 0.3 * j) / float(HEIGHT);
 				r = ray(origin, lowerLeftCorner + (u * horizontal) + (v * vertical));
-				col = col + color(r, sphereNumber, &hittedMaterial[threadIdx.x]);
+				col = col + color(r, sphereNumber, &hittedMaterial[threadIdx.x], 0);
 				col = col / 2;
 			}
 		}
@@ -120,15 +156,30 @@ __global__ void kernel(int* imageGpu, int sphereNumber){
 	}
 
 	//Put the color seen by the ray in the memory address that correspond to the pixel
-	imageGpu[addressConverter(h, w, 0)] = int(255.99 * col.x);
-	imageGpu[addressConverter(h, w, 1)] = int(255.99 * col.y);
-	imageGpu[addressConverter(h, w, 2)] = int(255.99 * col.z);
+	imageGpu[addressConverter(h, w, 0)] = int(255.99 * sqrt(col.x));
+	imageGpu[addressConverter(h, w, 1)] = int(255.99 * sqrt(col.y));
+	imageGpu[addressConverter(h, w, 2)] = int(255.99 * sqrt(col.z));
 
+}
+
+__global__ void debug(){
+	int offset = blockIdx.x * blockDim.x;
+	int w = offset % WIDTH + threadIdx.x;
+	int h = int(offset / WIDTH);
+
+	rndInit();
+	printf("0 - %f %f %f\n", randomSpherePoint().x, randomSpherePoint().y, randomSpherePoint().z);
+	rndInit();
+	printf("1 -  %f %f %f\n", randomSpherePoint().x, randomSpherePoint().y, randomSpherePoint().z);
+	rndInit();
+	printf("2 - %f %f %f\n", randomSpherePoint().x, randomSpherePoint().y, randomSpherePoint().z);
+	rndInit();
+	printf("3 - %f %f %f\n", randomSpherePoint().x, randomSpherePoint().y, randomSpherePoint().z);
 }
 
 int main ()
 {
-
+	cudaDeviceSetLimit(cudaLimitStackSize, 32768ULL);
 	//Allocate a tridimensional vector that contains the image's data
 	int *image;
 
@@ -180,6 +231,7 @@ int main ()
 	gpuErrorCheck();
 
 	kernel<<<BLKSIZE, THRDSIZE, 0, stream>>>(imageGpu, 2);
+	//debug<<<2, 3>>>();
 	gpuErrorCheck();
 
 	//deallocate the constant data that now reside in the constant memory from the cpu
@@ -191,10 +243,12 @@ int main ()
 
 	//We have to be sure that all the data are back to the cpu
 	cudaStreamSynchronize(stream);
+	gpuErrorCheck(2);
 	generate(WIDTH, HEIGHT, BYTESPERPIXEL, image);
+	gpuErrorCheck(1);
 
 	cudaFreeHost(image);
-	gpuErrorCheck();
+	gpuErrorCheck(0);
 
 	printf("fine\n");
     return EXIT_SUCCESS;

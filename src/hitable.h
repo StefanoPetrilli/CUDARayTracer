@@ -13,7 +13,6 @@ class sphere {
 		float radius;
 		int id;
 
-		__device__ void print() {printf("ao");}
 		__device__ __host__ sphere() {}
 		__device__ __host__ sphere(float3 cen,  float rad, int i) {
 			center = cen;
