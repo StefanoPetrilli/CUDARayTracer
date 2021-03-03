@@ -1,3 +1,8 @@
+enum materials {
+	MATTE = 1,
+	METAL = 2
+};
+
 //When there is an hit we store the parameters of the hitted object to do the calculation
 //only on the closest hitted object
 struct hitRecord {
@@ -5,19 +10,29 @@ struct hitRecord {
 	float3 c;
 	float r;
 	int objId;
+	float3 color;
+	materials material;
 };
+
+__device__ float3 reflect (const float3 &v, const float3 &n) {
+	return v - 2*dot(v, n) * n;
+}
 
 class sphere {
 	public:
 		float3 center;
 		float radius;
 		int id;
+		float3 color;
+		materials material;
 
 		__device__ __host__ sphere() {}
-		__device__ __host__ sphere(float3 cen,  float rad, int i) {
+		__device__ __host__ sphere(float3 cen,  float rad, int i, float3 col, materials m) {
 			center = cen;
 			radius = rad;
 			id = i;
+			color = col;
+			material = m;
 		};
 
 		__device__ bool hit(const ray &r, float tMin, float tMax, hitRecord &rec) const {
@@ -39,6 +54,8 @@ class sphere {
 					rec.c = center;
 					rec.r = radius;
 					rec.objId = id;
+					rec.color = color;
+					rec.material = material;
 					return true;
 				}
 				//Do the same with the second hitting point
@@ -48,6 +65,8 @@ class sphere {
 					rec.c = center;
 					rec.r = radius;
 					rec.objId = id;
+					rec.color = color;
+					rec.material = material;
 					return true;
 				}
 			}

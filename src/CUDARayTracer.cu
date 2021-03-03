@@ -4,15 +4,14 @@
 #include "float3.h"
 #include "ray.h"
 #include "hitable.h"
-#include <curand.h>
-#include <curand_kernel.h>
+#include "random.cuh"
 
 
-//TODO generate numberm more randomly
-//TODO eliminate the recursion
+
 //TODO write some comments
 
 //--Optional
+//TODO generate numberm more randomly
 //TODO make the antialiasing sampling random.
 ////TODO Fare in modo che sia possibile costruire scene dinamicamente e gli oggetti delle scene
 //				che vengono costruite verranno salvati nella memoria statica
@@ -34,91 +33,105 @@ __constant__ float3 horizontal;
 __constant__ sphere spheres[OBJNUMBER];
 
 //Number of spheres
-const int sn = 2;
+const int sphereNumber = 4;
 
-__device__ curandState_t state;
-
+/**
+ * Check for gpu errors
+ */
 void gpuErrorCheck(int i = 0){
 	cudaError_t err = cudaGetLastError();
 	if (err != cudaSuccess)
 		    printf("Error %d: %s\n", i, cudaGetErrorString(err));
 }
 
-//TODO pass the actual time to make it random
-__device__ int pw = 0;
-__device__ void rndInit(){
-
-	pw = pw + threadIdx.x  + blockIdx.x * blockDim.x;
-	//Init the parameters used to generate the random number
-	curand_init(pw, 0, 0, &state);
-}
-
-__device__ float getRndFloat(){
-	return  curand_uniform (&state);
-}
-
-__device__ float3 randomSpherePoint(){
-	rndInit();
-	//Init the parameters used to generate the random number
-	float3 p = make_float3(curand_uniform (&state), curand_uniform (&state), curand_uniform (&state)) - make_float3(1, 1, 1) ;
-	while (float3SquaredLength(p) >= 1.0) {
-		p = make_float3(curand_uniform (&state), curand_uniform (&state), curand_uniform (&state)) - make_float3(1, 1, 1) ;
-	}
-	return p;
-}
-
 /**
- * Given a ray, create the blend of colors
+ * Calculate the color iteratively
  */
-__device__ float3 color(ray &r, int sphereNumber, int* hittedMaterial, int d){
+__device__ float3 color(ray &r, int sphereNumber, int* hittedMaterial, int maxIteration){
 
-	hitRecord rec, tempRec;
-	bool hitted = false;
-	double closest = MAXFLOAT;
+	ray currentRay;
+	currentRay.A = r.origin();
+	currentRay.B = r.direction();
+	int iteration = 0;
+	float3 colorMultiplier = make_float3(1, 1, 1);
 
-	for(int i = 0; i < sphereNumber; i++) {
-		//Check if the ray hit the object
-		//If there is already an hitted object it controls also if the new hitted object is closer than the previous
-		if (spheres[i].hit(r, 0.01, closest, tempRec)) {
-			hitted = true;
-			closest = tempRec.t;
-			rec = tempRec;
+	while(true) {
+		hitRecord rec, tempRec;
+		bool hitted = false;
+		double closest = MAXFLOAT;
+
+		//For each object check if the ray hit that object
+		for(int i = 0; i < sphereNumber; i++) {
+			//Check if the ray hit the object
+			//If there is already an hitted object it controls also if the new hitted object is closer than the previous
+			if (spheres[i].hit(currentRay, 0.001, closest, tempRec)) {
+				hitted = true;
+				closest = tempRec.t;
+				rec = tempRec;
+			}
 		}
+
+		//If the ray hitted something
+		if (hitted && iteration < maxIteration) {
+			iteration ++;
+			//Register the hitted object
+			*hittedMaterial = rec.objId;
+
+			//Calculate the normal of the hitted objed
+			float3 normal = (currentRay.pointAtParam(rec.t) - rec.c) / rec.r;
+
+			if (rec.material == MATTE) {
+				//TODO comment that
+				float3 target = currentRay.pointAtParam(rec.t) + normal + randomSpherePoint();
+
+				currentRay = ray(currentRay.pointAtParam(rec.t), target - currentRay.pointAtParam(rec.t));
+
+				//After each iteration a percent of the light is absorbed
+				colorMultiplier = rec.color * colorMultiplier;
+			} else if (rec.material == METAL) {
+				float3 reflected = reflect(unitVector(currentRay.direction()) , normal);
+
+				currentRay= ray(currentRay.pointAtParam(rec.t), reflected);
+
+				colorMultiplier = rec.color * colorMultiplier;
+				iteration = maxIteration - 1;
+			}
+
+
+		} else { //Draw the background
+			float y = unitVector(r.direction()).y;
+			float t = 0.5 * (y + 1.0);
+			colorMultiplier = colorMultiplier * ((1.0 - t) * make_float3(1.0, 1.0, 1.0) + t * make_float3(0.5, 0.7, 1.0));
+			return colorMultiplier;
 	}
-
-	//If the ray hitted something
-	if (hitted && d < 2) {
-		//Calculate the normal of the hitted objed
-		float3 normal = (r.pointAtParam(rec.t) - rec.c) / rec.r;
-		//Draw the normal
-		*hittedMaterial = rec.objId;
-
-		float3 target = r.pointAtParam(rec.t) + (0.5 * make_float3(normal.x + 1.0, normal.y + 1.0, normal.z + 1.0)) + randomSpherePoint();
-
-		ray z = ray(r.pointAtParam(rec.t), target - r.pointAtParam(rec.t));
-		return 0.5 * color(z , sphereNumber, &hittedMaterial[threadIdx.x], d + 1);//make_float3(normal.x + 1.0, normal.y + 1.0, normal.z + 1.0); //* color(z , sphereNumber, &hittedMaterial[threadIdx.x]);
-	} else { //Draw the background
-		float y = unitVector(r.direction()).y;
-		float t = 0.5 * (y + 1.0);
-		return (1.0 - t) * make_float3(1.0, 1.0, 1.0) + t * make_float3(0.5, 0.7, 1.0);
 	}
 }
 
 
 
-__global__ void kernel(int* imageGpu, int sphereNumber){
+__global__ void kernel(int* imageGpu, int sphereNumber, int maxIteration){
+	/**
+	 * This array of hitted material keep track of the materials hitted by the thread
+	 * in the same block.
+	 */
 	__shared__ int hittedMaterial[THRDSIZE];
-	__shared__ bool anti;
 
-	if (threadIdx.x == 0) anti = false;
 
+	// This variable control if a block has to execute the raytracing
+	__shared__ bool performRaytracing;
+
+	//Only one thread per block set this variable to false
+	if (threadIdx.x == 0) performRaytracing = false;
+
+	//All the array of hitted objects is iniitalized to the same value
 	hittedMaterial[threadIdx.x] = 0;
 
+	//The memory location where each thread has to operate is initialized
 	int offset = blockIdx.x * blockDim.x;
+
+	//width and height coordinates are calculated
 	int w = offset % WIDTH + threadIdx.x;
 	int h = int(offset / WIDTH);
-
-	rndInit();
 
 	//u and v are used to translate a pixel coordinate on the scene
 	float u =  float(w) / float(WIDTH);
@@ -127,59 +140,46 @@ __global__ void kernel(int* imageGpu, int sphereNumber){
 	//generate a ray that start from the origin and pass trough the center of a given pixel
 	ray r(origin, lowerLeftCorner + (u * horizontal) + (v * vertical));
 	//calculate the color that that ray sees
-	float3 col = color(r, sphereNumber, &hittedMaterial[threadIdx.x], 0);
+	float3 col = color(r, sphereNumber, &hittedMaterial[threadIdx.x], maxIteration);
 
+	//One thread per block checks if all the other threads hitted the same object
 	__syncthreads();
 	if (threadIdx.x == 0) {
 		int firstHit = hittedMaterial[0];
 		for (int i = 1; i < THRDSIZE; i++) {
 			if(firstHit != hittedMaterial[i]) {
-				anti = true;
+				performRaytracing = true;
 			}
 		}
 	}
 	__syncthreads();
 
 
-	if (anti) { //Exec the antialiasing if necessary
-		//Generate 9 ray equally spaced for each pixel
-		for (int i = 0; i < 3; i ++) {
-			for (int j = 0; j < 3; j ++){
-				u =  (float(w) + 0.3 * i) / float(WIDTH);
-				v = (float(h) + 0.3 * j) / float(HEIGHT);
+
+	if (performRaytracing) { //Exec the antialiasing if necessary
+		//Generate 100 ray equally spaced for each pixel
+		for (int i = -5; i < 5; i ++) {
+			for (int j = -5; j < 5; j ++){
+				u =  (float(w) + 0.1 * i) / float(WIDTH);
+				v = (float(h) + 0.1 * j) / float(HEIGHT);
 				r = ray(origin, lowerLeftCorner + (u * horizontal) + (v * vertical));
-				col = col + color(r, sphereNumber, &hittedMaterial[threadIdx.x], 0);
+				col = col + color(r, sphereNumber, &hittedMaterial[threadIdx.x], maxIteration);
 				col = col / 2;
 			}
 		}
-		//in the end the value of color is the average color of the 9 rays
+		//col = make_float3(1, 0, 0);
+		//in the end the value of color is the average color of the 100 rays
 	}
 
 	//Put the color seen by the ray in the memory address that correspond to the pixel
-	imageGpu[addressConverter(h, w, 0)] = int(255.99 * sqrt(col.x));
-	imageGpu[addressConverter(h, w, 1)] = int(255.99 * sqrt(col.y));
-	imageGpu[addressConverter(h, w, 2)] = int(255.99 * sqrt(col.z));
+	imageGpu[addressConverter(h, w, 0)] += int(255.99 * col.x);
+	imageGpu[addressConverter(h, w, 1)] += int(255.99 * col.y);
+	imageGpu[addressConverter(h, w, 2)] += int(255.99 * col.z);
 
-}
-
-__global__ void debug(){
-	int offset = blockIdx.x * blockDim.x;
-	int w = offset % WIDTH + threadIdx.x;
-	int h = int(offset / WIDTH);
-
-	rndInit();
-	printf("0 - %f %f %f\n", randomSpherePoint().x, randomSpherePoint().y, randomSpherePoint().z);
-	rndInit();
-	printf("1 -  %f %f %f\n", randomSpherePoint().x, randomSpherePoint().y, randomSpherePoint().z);
-	rndInit();
-	printf("2 - %f %f %f\n", randomSpherePoint().x, randomSpherePoint().y, randomSpherePoint().z);
-	rndInit();
-	printf("3 - %f %f %f\n", randomSpherePoint().x, randomSpherePoint().y, randomSpherePoint().z);
 }
 
 int main ()
 {
-	cudaDeviceSetLimit(cudaLimitStackSize, 32768ULL);
 	//Allocate a tridimensional vector that contains the image's data
 	int *image;
 
@@ -220,18 +220,20 @@ int main ()
 	cudaMemcpyAsync(imageGpu, image, sizeof(int) * WIDTH * HEIGHT * BYTESPERPIXEL, cudaMemcpyHostToDevice, stream);
 	gpuErrorCheck();
 
-	sphere *spheresCPU[sn];
+	sphere *spheresCPU[sphereNumber];
 
-	spheresCPU[0] = new sphere(make_float3(0, 0, -1), 0.5, 1);
-	spheresCPU[1] = new sphere(make_float3(10, -100.5, -1), 100, 2);
+	spheresCPU[0] = new sphere(make_float3(-0.5, 0, -1.25), 0.5, 1, make_float3(0.7, 0.3, 0.3), MATTE);
+	spheresCPU[1] = new sphere(make_float3(0, -100.5, -1), 100, 2, make_float3(0.7, 0.7, 0.3), MATTE);
+	spheresCPU[2] = new sphere(make_float3(0.5, 0, -1.25), 0.5, 3, make_float3(0.8, 0.6, 0.2), METAL);
+	spheresCPU[3] = new sphere(make_float3(0., 0.75, -1.25), 0.5, 3, make_float3(0.8, 0.8, 0.8), METAL);
 
-	for (int  i = 0; i <  sn; i++) {
+	for (int  i = 0; i <  sphereNumber; i++) {
 		cudaMemcpyToSymbolAsync(spheres, spheresCPU[i], sizeof(sphere), sizeof(sphere) * i, cudaMemcpyHostToDevice);
 	}
 	gpuErrorCheck();
 
-	kernel<<<BLKSIZE, THRDSIZE, 0, stream>>>(imageGpu, 2);
-	//debug<<<2, 3>>>();
+	kernel<<<BLKSIZE, THRDSIZE, 0, stream>>>(imageGpu, sphereNumber, 10);
+
 	gpuErrorCheck();
 
 	//deallocate the constant data that now reside in the constant memory from the cpu
