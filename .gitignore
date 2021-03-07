@@ -1,1 +1,6 @@
 /Release/
+..imagesoutput.ppm
+.imagesoutput.ppm
+.cpproject
+.project
+.settings/
