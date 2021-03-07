@@ -33,7 +33,7 @@ __constant__ float3 horizontal;
 __constant__ sphere spheres[OBJNUMBER];
 
 //Number of spheres
-const int sphereNumber = 4;
+const int sphereNumber = 10;
 
 /**
  * Check for gpu errors
@@ -95,8 +95,30 @@ __device__ float3 color(ray &r, int sphereNumber, int* hittedMaterial, int maxIt
 
 				colorMultiplier = rec.color * colorMultiplier;
 				iteration = maxIteration - 1;
-			}
+			} else if (rec.material == GLASS) {
 
+				float3 outwardNormal;
+				float3 reflected = reflect(currentRay.direction(), normal);
+				float3 attenuation = make_float3(1, 1, 1);
+				float niOverNt;
+
+				if (dot(currentRay.direction(), normal) > 0) { //the rau face outside ??
+					outwardNormal = -1 * normal;
+					niOverNt = rec.refractionIndex;
+				} else { //The ray face inside
+					outwardNormal = normal;
+					niOverNt = 1.0 / rec.refractionIndex;
+				}
+
+				float3 refracted;
+				if(!refract(currentRay.direction(), outwardNormal, niOverNt, refracted))
+					iteration = maxIteration;
+
+				currentRay = ray(currentRay.pointAtParam(rec.t), refracted);
+				colorMultiplier = attenuation * colorMultiplier;
+			}else if (rec.material == LIGHT){
+				return rec.color;
+			}
 
 		} else { //Draw the background
 			float y = unitVector(r.direction()).y;
@@ -172,9 +194,9 @@ __global__ void kernel(int* imageGpu, int sphereNumber, int maxIteration){
 	}
 
 	//Put the color seen by the ray in the memory address that correspond to the pixel
-	imageGpu[addressConverter(h, w, 0)] += int(255.99 * col.x);
-	imageGpu[addressConverter(h, w, 1)] += int(255.99 * col.y);
-	imageGpu[addressConverter(h, w, 2)] += int(255.99 * col.z);
+	imageGpu[addressConverter(h, w, 0)] = int(255.99 * col.x);
+	imageGpu[addressConverter(h, w, 1)] = int(255.99 * col.y);
+	imageGpu[addressConverter(h, w, 2)] = int(255.99 * col.z);
 
 }
 
@@ -199,6 +221,7 @@ int main ()
 	cudaHostAlloc((void**) &horizontalCPU, sizeof(float3), cudaHostAllocDefault);
 	cudaHostAlloc((void**) &verticalCPU, sizeof(float3), cudaHostAllocDefault);
 	cudaHostAlloc((void**) &originCPU, sizeof(float3), cudaHostAllocDefault);
+
 	lowerLeftCornerCPU = make_float3(-2.0, -1.0, -1.0);
 	horizontalCPU = make_float3(4.0, 0.0, 0.0);
 	verticalCPU = make_float3(0.0, 2.0, 0.0);
@@ -222,10 +245,17 @@ int main ()
 
 	sphere *spheresCPU[sphereNumber];
 
-	spheresCPU[0] = new sphere(make_float3(-0.5, 0, -1.25), 0.5, 1, make_float3(0.7, 0.3, 0.3), MATTE);
-	spheresCPU[1] = new sphere(make_float3(0, -100.5, -1), 100, 2, make_float3(0.7, 0.7, 0.3), MATTE);
-	spheresCPU[2] = new sphere(make_float3(0.5, 0, -1.25), 0.5, 3, make_float3(0.8, 0.6, 0.2), METAL);
-	spheresCPU[3] = new sphere(make_float3(0., 0.75, -1.25), 0.5, 3, make_float3(0.8, 0.8, 0.8), METAL);
+	spheresCPU[0] = new sphere(make_float3(0, -100.5, -1), 100, 0, make_float3(0.7, 0.7, 0.7), MATTE);
+	spheresCPU[1] = new sphere(make_float3(-1.5, -0.2, -1.3), 0.4, 1, make_float3(0.7, 0.3, 0.3), MATTE);
+	spheresCPU[2] = new sphere(make_float3(-0.5, -0.2, -1.3), 0.4, 2, make_float3(0.9, 0.4, 0.4), GLASS, 1.5);
+	spheresCPU[3] = new sphere(make_float3(0.5, -0.2, -1.3), 0.4, 3, make_float3(0.8, 0.6, 0.2), LIGHT);
+	spheresCPU[4] = new sphere(make_float3(1.5, -0.2, -1.3), 0.4, 4, make_float3(0.8, 0.8, 0.8), METAL);
+
+	spheresCPU[5] = new sphere(make_float3(1,  -0.3, -0.9), 0.2, 5, make_float3(0.9, 0.9, 0.9), MATTE);
+	spheresCPU[6] = new sphere(make_float3(-1, -0.3, -0.9), 0.2, 6, make_float3(0.3, 0.3, 0.9), MATTE);
+	spheresCPU[7] = new sphere(make_float3(-0.0, -0.3, -0.9), 0.2, 7, make_float3(0.9, 0.4, 0.4), GLASS, 2.44);
+	spheresCPU[8] = new sphere(make_float3(-0.5, -0.3, -0.9), 0.2, 8, make_float3(0.1, 0.1, 0.7), LIGHT);
+	spheresCPU[9] = new sphere(make_float3(0.5, -0.3, -0.9), 0.2, 9, make_float3(0.2, 0.2, 0.8), METAL);
 
 	for (int  i = 0; i <  sphereNumber; i++) {
 		cudaMemcpyToSymbolAsync(spheres, spheresCPU[i], sizeof(sphere), sizeof(sphere) * i, cudaMemcpyHostToDevice);

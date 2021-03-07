@@ -1,6 +1,6 @@
 #include <math.h>
 
-__device__ float float3Length(float3 &a){
+__device__  float float3Length(float3 &a){
 		return sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
 }
 
@@ -13,6 +13,11 @@ __device__ float3 operator+ (const float3 &a, const float3 &b){
 }
 
 __device__ float3 operator* (float t, const float3 &a){
+	return make_float3(a.x  * t, a.y *t, a.z *t);
+}
+
+//TODO delete this one
+__device__ float3 operator* (const float3 &a, float t){
 	return make_float3(a.x  * t, a.y *t, a.z *t);
 }
 

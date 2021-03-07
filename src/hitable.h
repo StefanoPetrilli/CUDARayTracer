@@ -1,6 +1,8 @@
 enum materials {
 	MATTE = 1,
-	METAL = 2
+	METAL = 2,
+	GLASS = 3,
+	LIGHT = 4
 };
 
 //When there is an hit we store the parameters of the hitted object to do the calculation
@@ -12,10 +14,22 @@ struct hitRecord {
 	int objId;
 	float3 color;
 	materials material;
+	float refractionIndex;
 };
 
 __device__ float3 reflect (const float3 &v, const float3 &n) {
 	return v - 2*dot(v, n) * n;
+}
+
+__device__ bool refract(const float3 v, const float3 normal, float niOverNt, float3 &refracted){
+	float3 uv = unitVector(v);
+	float dt = dot(uv, normal);
+	float discriminant = 1.0 - niOverNt * niOverNt * (1 - dt*dt);
+	if (discriminant > 0) {
+		refracted = niOverNt * (uv - normal*dt) - normal * sqrt(discriminant);
+		return true;
+	}
+	return false;
 }
 
 class sphere {
@@ -25,14 +39,16 @@ class sphere {
 		int id;
 		float3 color;
 		materials material;
+		float refractionIndex;
 
 		__device__ __host__ sphere() {}
-		__device__ __host__ sphere(float3 cen,  float rad, int i, float3 col, materials m) {
+		__device__ __host__ sphere(float3 cen,  float rad, int i, float3 col, materials m, float ref = 1) {
 			center = cen;
 			radius = rad;
 			id = i;
 			color = col;
 			material = m;
+			refractionIndex = ref;
 		};
 
 		__device__ bool hit(const ray &r, float tMin, float tMax, hitRecord &rec) const {
@@ -56,6 +72,7 @@ class sphere {
 					rec.objId = id;
 					rec.color = color;
 					rec.material = material;
+					rec.refractionIndex = refractionIndex;
 					return true;
 				}
 				//Do the same with the second hitting point
@@ -67,6 +84,7 @@ class sphere {
 					rec.objId = id;
 					rec.color = color;
 					rec.material = material;
+					rec.refractionIndex = refractionIndex;
 					return true;
 				}
 			}
