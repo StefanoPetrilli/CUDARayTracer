@@ -16,10 +16,12 @@ __device__ float3 operator* (float t, const float3 &a){
 	return make_float3(a.x  * t, a.y *t, a.z *t);
 }
 
+/*
 //TODO delete this one
 __device__ float3 operator* (const float3 &a, float t){
 	return make_float3(a.x  * t, a.y *t, a.z *t);
 }
+*/
 
 __device__ float3 operator* (const float3  &b, const float3 &a){
 	return make_float3(a.x  * b.x, a.y * b.y, a.z  * b.z);
@@ -41,7 +43,7 @@ __device__ float dot(const float3 &u, const float3 &v) {
     return (u.x * v.x) + (u.y * v.y) + (u.z * v.z);
 }
 
-//TODO capire a che serve
+//Return a vector of length 1.
 __device__ float3 unitVector(float3 v){
 	return v / float3Length(v);
 }
