@@ -16,10 +16,12 @@ __device__ void rndInit(){
 
 __device__ float getRndFloat(){
 	float p = curand_uniform (&state);
-	//printf("%f \n", p);
 	return  p;
 }
 
+/**
+ * Generate a random sphere point
+ */
 __device__ float3 randomSpherePoint(){
 	rndInit();
 	//Init the parameters used to generate the random number

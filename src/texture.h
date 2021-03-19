@@ -25,7 +25,6 @@ class myTexture {
 
 			FILE *ppm = fopen(fullPath, "r");
 
-			//
 			if (ppm == NULL) {
 				perror("Error opening texture.\n");
 			}
@@ -52,7 +51,6 @@ class myTexture {
 
 			 //Allocate enough space to store the image data.
 			 cudaHostAlloc((void**)&img, width * height * BYTESPERPIXEL * sizeof( int), cudaHostAllocDefault);
-			 //img = (int*) malloc(width * height * BYTESPERPIXEL * sizeof( int));
 
 			 //Read all the lines of the file
 			 int x = 0;
@@ -61,12 +59,12 @@ class myTexture {
 
 
 			 char *value;
-			 while (fgets (buffer, 10000, ppm) != NULL) { //A line rs read till there is something to read
+			 while (fgets (buffer, 10000, ppm) != NULL) { //A line is read till there is something to read
 				 value = strtok (buffer, " "); //strtok return a single word of the line each time it is called
-				 while (value != NULL) { //Thill there is something in the buffer
+				 while (value != NULL) { //Till there is something in the buffer
 					 img[addressConverterTexture(y, x, pixel, width)] =  atoi(value); //The value of a pixel is set based on the value read
 					 value = strtok (NULL, " ");
-					 if(value == NULL){ //If in the buffer there is nothin, read the next line
+					 if(value == NULL){ //If in the buffer there is nothing, read the next line
 						 break;
 					 }
 					 pixel ++; //Update the pixel counter
