@@ -1,5 +1,6 @@
 # CUDARayTracer
-![Alt Text](https://s4.gifyu.com/images/Untitled8772bc18b6640d85.gif)
+
+![1617905515202](https://user-images.githubusercontent.com/8702339/227385787-a111f5ac-ce6d-474f-9509-ef91f8f1c35e.jpeg)
 
 Raytracers are part of embarrassingly parallel problems. The problems of this kind, require little or no effort to be divided into an arbitrary number of parallel tasks.
 In fact, in my implementation, a small group of pixels are computed independently from all the other pixels.
